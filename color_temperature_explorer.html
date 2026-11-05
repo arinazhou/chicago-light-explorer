@@ -1,0 +1,489 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Color Temperature Explorer</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<!-- written by lakefront_vs_city_color.ipynb, Step 6c -->
+<script src="cct_explorer_data.js"></script>
+<style>
+  :root {
+    --surface: #1a1a19;
+    --panel: #222221;
+    --line: #3a3a38;
+    --ink: #ecebe6;
+    --ink-2: #b9b8b1;
+    --ink-3: #8c8b85;
+    --lakefront: #d0559a;
+    --ring: #a68e26;
+    --rest: #9a9993;
+    --warm: #e0703a;
+    --middle: #8d8c86;
+    --cool: #4a8fe0;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--surface); color: var(--ink);
+               font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  .app { display: grid; grid-template-columns: 1fr 380px; height: 100vh; }
+  #map { background: #0e0e0d; }
+  .leaflet-image-layer { image-rendering: pixelated; image-rendering: crisp-edges; }
+  .leaflet-container { font: inherit; }
+  aside { background: var(--panel); border-left: 1px solid var(--line); overflow-y: auto; padding: 16px; }
+  h1 { font-size: 16px; margin: 0 0 2px; }
+  .sub { color: var(--ink-3); margin: 0 0 14px; font-size: 12px; }
+  section { border-top: 1px solid var(--line); padding: 12px 0; }
+  h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-3); margin: 0 0 8px; font-weight: 600; }
+  label { display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 2px 0; }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .seg button { background: none; border: 0; color: var(--ink-2); padding: 5px 10px; cursor: pointer; font: inherit; }
+  .seg button[aria-pressed="true"] { background: #3a3a38; color: var(--ink); font-weight: 600; }
+  .seg a { color: var(--ink-2); padding: 5px 10px; text-decoration: none; }
+  .seg a:hover { color: var(--ink); }
+  .seg a[aria-current="page"] { background: #3a3a38; color: var(--ink); font-weight: 600; }
+  .btn { background: none; border: 1px solid var(--line); border-radius: 6px; color: var(--ink-2); padding: 4px 9px; cursor: pointer; font: inherit; }
+  .btn:hover, .seg button:hover { color: var(--ink); }
+  .slider { display: grid; grid-template-columns: 72px 1fr 64px; align-items: center; gap: 8px; margin: 4px 0; }
+  .slider span:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 100%; accent-color: #b9b8b1; }
+  .key { display: inline-block; width: 18px; height: 0; border-top: 2px solid; vertical-align: middle; }
+  .swatch { display: inline-block; width: 11px; height: 11px; border-radius: 2px; vertical-align: -1px; }
+  .scale { height: 10px; border-radius: 2px; margin: 6px 0 2px; }
+  .scale-ticks { display: flex; justify-content: space-between; color: var(--ink-3); font-size: 11px; }
+  #readout { position: absolute; left: 12px; bottom: 22px; z-index: 1000; background: rgba(20,20,19,.9); border: 1px solid var(--line);
+             border-radius: 6px; padding: 6px 10px; pointer-events: none; min-width: 180px; }
+  #readout b { font-size: 15px; font-variant-numeric: tabular-nums; }
+  #readout .muted { color: var(--ink-3); }
+  #hist { width: 100%; height: 210px; display: block; }
+  #hist text { fill: var(--ink-3); font-size: 10px; }
+  #tip { position: fixed; z-index: 2000; background: #2c2c2a; border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px;
+         pointer-events: none; display: none; font-size: 12px; white-space: nowrap; }
+  #tip .v { font-weight: 600; font-variant-numeric: tabular-nums; color: var(--ink); }
+  #tip .n { color: var(--ink-2); }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { padding: 4px 4px; text-align: right; border-bottom: 1px solid var(--line); }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--ink-3); font-weight: 500; font-size: 11px; }
+  .legend { display: flex; gap: 12px; flex-wrap: wrap; color: var(--ink-2); font-size: 12px; margin-bottom: 4px; }
+  .note { color: var(--ink-3); font-size: 11px; margin: 6px 0 0; }
+  #loading { position: absolute; inset: 0; display: grid; place-items: center; z-index: 3000; background: var(--surface); color: var(--ink-2); }
+  @media (max-width: 800px) {
+    .app { grid-template-columns: 1fr; grid-template-rows: 60vh auto; height: auto; }
+    aside { border-left: 0; border-top: 1px solid var(--line); }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <div id="map" style="position:relative">
+    <div id="readout"><span class="muted">Hover the map to read a pixel</span></div>
+    <div id="loading">Loading data…</div>
+  </div>
+  <aside>
+    <nav class="seg" aria-label="Map" style="margin-bottom:14px">
+      <a href="color_temperature_explorer.html" aria-current="page">Color temperature</a>
+      <a href="radiance_explorer.html">Radiance</a>
+    </nav>
+    <h1>Color temperature explorer</h1>
+    <p class="sub">Chicago, Sept 15 2025 ~9:30 pm · 40 m pixels · approximate Kelvin (the red band includes near-infrared)</p>
+
+    <section>
+      <h2>Areas on the map</h2>
+      <label><input type="checkbox" data-area="1" checked> Public Use Zone <span class="muted" style="color:var(--ink-3)">(lakefront)</span></label>
+      <label><input type="checkbox" data-area="2" checked> Private Use Zone <span style="color:var(--ink-3)">(lakefront)</span></label>
+      <label><input type="checkbox" data-area="3" checked> 5 km ring</label>
+      <label><input type="checkbox" data-area="4" checked> Rest of city (outside the ring)</label>
+      <label><input type="checkbox" id="outlines" checked> Area outlines</label>
+      <div class="row" style="margin-top:6px">
+        <button class="btn" data-only="1,2">Lakefront only</button>
+        <button class="btn" data-only="1,2,3,4">All</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Color</h2>
+      <div class="seg" role="group" aria-label="Color mode">
+        <button id="mode-continuous" aria-pressed="true">Kelvin scale</button>
+        <button id="mode-classes" aria-pressed="false">Warm / middle / cool</button>
+      </div>
+      <div id="continuous-controls" style="margin-top:8px">
+        <div class="scale" id="scale-bar"></div>
+        <div class="scale-ticks"><span id="k-lo-tick"></span><span>orange = warm · blue = cool</span><span id="k-hi-tick"></span></div>
+        <div class="slider"><span>From</span><input type="range" id="k-lo" min="1500" max="6000" step="50" value="2000"><span id="k-lo-v"></span></div>
+        <div class="slider"><span>To</span><input type="range" id="k-hi" min="1500" max="6000" step="50" value="5000"><span id="k-hi-v"></span></div>
+      </div>
+      <div id="class-controls" style="margin-top:8px" hidden>
+        <div class="legend">
+          <span><span class="swatch" style="background:var(--warm)"></span> warm</span>
+          <span><span class="swatch" style="background:var(--middle)"></span> middle</span>
+          <span><span class="swatch" style="background:var(--cool)"></span> cool</span>
+        </div>
+        <div class="slider"><span>Middle ≥</span><input type="range" id="mid-lo" min="1500" max="6000" step="10"><span id="mid-lo-v"></span></div>
+        <div class="slider"><span>Middle ≤</span><input type="range" id="mid-hi" min="1500" max="6000" step="10"><span id="mid-hi-v"></span></div>
+        <button class="btn" id="mid-reset">Reset to middle 50% of rest of city</button>
+      </div>
+      <div class="slider" style="margin-top:8px"><span>Opacity</span><input type="range" id="opacity" min="0" max="1" step="0.05" value="0.9"><span id="opacity-v"></span></div>
+    </section>
+
+    <section>
+      <h2>Go to</h2>
+      <div class="row">
+        <button class="btn" data-go="city">Whole city</button>
+        <button class="btn" data-go="lakefront">Whole lakefront</button>
+        <button class="btn" data-go="lincoln">Lincoln Park</button>
+        <button class="btn" data-go="downtown">Downtown</button>
+        <button class="btn" data-go="jackson">Jackson Park</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Distribution</h2>
+      <div class="seg" role="group" aria-label="Statistics scope" style="margin-bottom:8px">
+        <button id="scope-view" aria-pressed="true">What's on screen</button>
+        <button id="scope-city" aria-pressed="false">Whole city</button>
+      </div>
+      <div class="legend" id="hist-legend"></div>
+      <svg id="hist" role="img" aria-label="Histogram of color temperature by area"></svg>
+      <p class="note">Share of each area's usable pixels per 100 K. Gray band = current "middle" range.</p>
+      <table id="class-table" style="margin-top:8px"></table>
+      <p class="note">Only the areas switched on above are counted.</p>
+    </section>
+  </aside>
+</div>
+<div id="tip"></div>
+
+<script>
+const D = window.CCT_EXPLORER;
+const GROUPS = [
+  { name: "Lakefront", areas: [1, 2], color: "#d0559a", dash: null },
+  { name: "5 km ring", areas: [3], color: "#a68e26", dash: null },
+  { name: "Rest of city", areas: [4], color: "#9a9993", dash: "4 3" },
+];
+const AREA_NAME = ["", "Public Use Zone", "Private Use Zone", "5 km ring", "Rest of city (outside the ring)"];
+const CLASS_COLOR = ["#e0703a", "#8d8c86", "#4a8fe0"];
+const BIN_LO = 1500, BIN_HI = 6000, BIN = 100, NBINS = (BIN_HI - BIN_LO) / BIN;
+const PLACES = {
+  lincoln: [[41.905, -87.66], [41.955, -87.615]],
+  downtown: [[41.855, -87.645], [41.905, -87.595]],
+  jackson: [[41.765, -87.6], [41.805, -87.555]],
+};
+
+const state = {
+  show: [false, true, true, true, true],
+  mode: "continuous", kLo: 2000, kHi: 5000,
+  midLo: D.middle[0], midHi: D.middle[1],
+  opacity: 0.9, scope: "view",
+};
+
+const toK = c => D.k_min + (c - 1) * D.k_step;
+const fmt = n => Math.round(n).toLocaleString("en-US");
+const hexRgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+
+async function inflate(b64) {
+  const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+function colorOf(k) {
+  if (state.mode === "classes") return CLASS_COLOR[classOf(k)];
+  const t = Math.min(1, Math.max(0, (k - state.kLo) / (state.kHi - state.kLo)));
+  return D.cmap[Math.round(t * (D.cmap.length - 1))];
+}
+function classOf(k) { return k < state.midLo ? 0 : k <= state.midHi ? 1 : 2; }
+
+// canvas shown as a map image: redrawn in place whenever a control changes
+const CanvasOverlay = L.ImageOverlay.extend({
+  _initImage() {
+    const el = this._image = this._url;
+    L.DomUtil.addClass(el, "leaflet-image-layer");
+    if (this._zoomAnimated) L.DomUtil.addClass(el, "leaflet-zoom-animated");
+    el.onselectstart = L.Util.falseFn;
+    el.onmousemove = L.Util.falseFn;
+  },
+});
+
+const map = L.map("map", { zoomSnap: 0.5, maxZoom: 19 });
+L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}", {
+  attribution: "Tiles &copy; Esri", maxZoom: 19, maxNativeZoom: 16,
+}).addTo(map);
+
+let cct, area, canvas, ctx, image, pixels32, overlay;
+const outlineLayer = L.layerGroup().addTo(map);
+const [WX0, WY0, WX1, WY1] = D.web_bounds;   // web map meters
+
+function draw() {
+  const lut = new Uint32Array(256);
+  for (let c = 1; c < 256; c++) {
+    const [r, g, b] = hexRgb(colorOf(toK(c)));
+    lut[c] = (255 << 24) | (b << 16) | (g << 8) | r;
+  }
+  const show = state.show;
+  for (let i = 0; i < cct.length; i++) {
+    const c = cct[i];
+    pixels32[i] = c && show[area[i]] ? lut[c] : 0;
+  }
+  ctx.putImageData(image, 0, 0);
+}
+
+function pixelRange(bounds) {
+  // map view -> rows and columns of the data grid
+  const sw = L.CRS.EPSG3857.project(bounds.getSouthWest()), ne = L.CRS.EPSG3857.project(bounds.getNorthEast());
+  const col = x => Math.floor((x - WX0) / (WX1 - WX0) * D.width);
+  const row = y => Math.floor((WY1 - y) / (WY1 - WY0) * D.height);
+  return {
+    c0: Math.max(0, col(sw.x)), c1: Math.min(D.width - 1, col(ne.x)),
+    r0: Math.max(0, row(ne.y)), r1: Math.min(D.height - 1, row(sw.y)),
+  };
+}
+
+function stats() {
+  const { c0, c1, r0, r1 } = state.scope === "view" ? pixelRange(map.getBounds())
+    : { c0: 0, c1: D.width - 1, r0: 0, r1: D.height - 1 };
+  const groupOf = new Int8Array(5).fill(-1);
+  GROUPS.forEach((g, k) => g.areas.forEach(a => { if (state.show[a]) groupOf[a] = k; }));
+  const bins = GROUPS.map(() => new Float64Array(NBINS));
+  const classes = GROUPS.map(() => [0, 0, 0]);
+  const codes = GROUPS.map(() => new Uint32Array(256));
+  for (let r = r0; r <= r1; r++) {
+    for (let i = r * D.width + c0, end = r * D.width + c1; i <= end; i++) {
+      const c = cct[i], g = groupOf[area[i]];
+      if (!c || g < 0) continue;
+      codes[g][c]++;
+    }
+  }
+  // the per-code counts give bins, classes and medians without a second pass
+  return GROUPS.map((grp, g) => {
+    let n = 0;
+    for (let c = 1; c < 256; c++) {
+      const m = codes[g][c]; if (!m) continue;
+      const k = toK(c); n += m;
+      const b = Math.floor((k - BIN_LO) / BIN);
+      if (b >= 0 && b < NBINS) bins[g][b] += m;
+      classes[g][classOf(k)] += m;
+    }
+    let half = n / 2, median = NaN;
+    for (let c = 1, s = 0; c < 256 && n; c++) { s += codes[g][c]; if (s >= half) { median = toK(c); break; } }
+    return { ...grp, n, share: Array.from(bins[g], v => n ? v / n : 0), classes: classes[g], median };
+  });
+}
+
+const SVGNS = "http://www.w3.org/2000/svg";
+function el(tag, attrs, parent) {
+  const e = document.createElementNS(SVGNS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+
+let lastStats = null;
+function renderStats() {
+  const s = lastStats = stats();
+  const svg = document.getElementById("hist");
+  const W = svg.clientWidth, H = svg.clientHeight, m = { l: 34, r: 16, t: 6, b: 34 };
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.replaceChildren();
+  const x = k => m.l + (k - BIN_LO) / (BIN_HI - BIN_LO) * (W - m.l - m.r);
+  const ymax = Math.max(0.01, ...s.flatMap(g => g.share)) * 1.1;
+  const y = v => H - m.b - v / ymax * (H - m.t - m.b);
+
+  el("rect", { x: x(state.midLo), y: m.t, width: Math.max(0, x(state.midHi) - x(state.midLo)), height: H - m.t - m.b,
+               fill: "#ecebe6", "fill-opacity": 0.06 }, svg);
+  const step = ymax > 0.2 ? 0.1 : ymax > 0.08 ? 0.04 : 0.02;
+  for (let v = 0; v <= ymax; v += step) {
+    el("line", { x1: m.l, x2: W - m.r, y1: y(v), y2: y(v), stroke: "#3a3a38", "stroke-width": 1 }, svg);
+    el("text", { x: m.l - 4, y: y(v) + 3, "text-anchor": "end" }, svg).textContent = Math.round(v * 100) + "%";
+  }
+  // color strip under the axis = the scale the map uses
+  for (let k = BIN_LO; k < BIN_HI; k += 50)
+    el("rect", { x: x(k), y: H - m.b + 3, width: x(k + 50) - x(k) + 0.5, height: 6, fill: colorOf(k + 25) }, svg);
+  for (let k = 2000; k <= 6000; k += 1000)
+    el("text", { x: x(k), y: H - m.b + 21, "text-anchor": "middle" }, svg).textContent = fmt(k);
+  el("text", { x: (W + m.l) / 2, y: H - 2, "text-anchor": "middle" }, svg).textContent = "color temperature (K)";
+
+  s.forEach(g => {
+    if (!g.n) return;
+    const pts = g.share.map((v, b) => `${x(BIN_LO + (b + 0.5) * BIN)},${y(v)}`).join(" ");
+    el("polyline", { points: pts, fill: "none", stroke: g.color, "stroke-width": 2, "stroke-linejoin": "round",
+                     ...(g.dash ? { "stroke-dasharray": g.dash } : {}) }, svg);
+  });
+
+  const hair = el("line", { y1: m.t, y2: H - m.b, stroke: "#b9b8b1", "stroke-width": 1, visibility: "hidden" }, svg);
+  const tip = document.getElementById("tip");
+  svg.onpointermove = e => {
+    const r = svg.getBoundingClientRect();
+    const k = BIN_LO + (e.clientX - r.left - m.l) / (W - m.l - m.r) * (BIN_HI - BIN_LO);
+    const b = Math.floor((k - BIN_LO) / BIN);
+    if (b < 0 || b >= NBINS) { svg.onpointerleave(); return; }
+    const cx = x(BIN_LO + (b + 0.5) * BIN);
+    hair.setAttribute("x1", cx); hair.setAttribute("x2", cx); hair.setAttribute("visibility", "visible");
+    tip.replaceChildren();
+    const head = document.createElement("div");
+    head.className = "n"; head.textContent = `${fmt(BIN_LO + b * BIN)}–${fmt(BIN_LO + (b + 1) * BIN)} K`;
+    tip.appendChild(head);
+    s.forEach(g => {
+      const row = document.createElement("div");
+      row.innerHTML = `<span class="key" style="border-top:2px ${g.dash ? "dashed" : "solid"} ${g.color}"></span> `;
+      const v = document.createElement("span"); v.className = "v";
+      v.textContent = g.n ? (g.share[b] * 100).toFixed(1) + "%" : "–";
+      const n = document.createElement("span"); n.className = "n"; n.textContent = " " + g.name;
+      row.append(v, n); tip.appendChild(row);
+    });
+    tip.style.display = "block";
+    tip.style.left = Math.min(e.clientX + 14, window.innerWidth - tip.offsetWidth - 8) + "px";
+    tip.style.top = (e.clientY - tip.offsetHeight - 10) + "px";
+  };
+  svg.onpointerleave = () => { hair.setAttribute("visibility", "hidden"); tip.style.display = "none"; };
+
+  const legend = document.getElementById("hist-legend");
+  legend.replaceChildren(...s.map(g => {
+    const span = document.createElement("span");
+    span.innerHTML = `<span class="key" style="border-top:2px ${g.dash ? "dashed" : "solid"} ${g.color}"></span> `;
+    span.append(`${g.name} (${fmt(g.n)} px)`);
+    return span;
+  }));
+
+  const t = document.getElementById("class-table");
+  t.replaceChildren();
+  const head = t.insertRow();
+  [["Area"], ["warm", `< ${fmt(state.midLo)} K`], ["middle"], ["cool", `> ${fmt(state.midHi)} K`], ["median"]].forEach(([a, b]) => {
+    const th = document.createElement("th"); th.textContent = a; th.title = b || ""; head.appendChild(th);
+  });
+  s.forEach(g => {
+    const tr = t.insertRow();
+    tr.insertCell().textContent = g.name;
+    g.classes.forEach(c => tr.insertCell().textContent = g.n ? (c / g.n * 100).toFixed(1) + "%" : "–");
+    tr.insertCell().textContent = g.n ? fmt(g.median) + " K" : "–";
+  });
+}
+
+function drawOutlines() {
+  outlineLayer.clearLayers();
+  if (!document.getElementById("outlines").checked) return;
+  const style = {
+    city: { color: "#c3c2b7", weight: 1 },
+    ring: { color: "#a68e26", weight: 1.5, dashArray: "5 4" },
+    public: { color: "#d0559a", weight: 1.5 },
+    private: { color: "#d0559a", weight: 1.5 },
+  };
+  for (const k in style) L.geoJSON(D.outlines[k], { style: { ...style[k], fill: false }, interactive: false }).addTo(outlineLayer);
+}
+
+function syncLabels() {
+  document.getElementById("k-lo-v").textContent = fmt(state.kLo) + " K";
+  document.getElementById("k-hi-v").textContent = fmt(state.kHi) + " K";
+  document.getElementById("k-lo-tick").textContent = fmt(state.kLo);
+  document.getElementById("k-hi-tick").textContent = fmt(state.kHi);
+  document.getElementById("mid-lo-v").textContent = fmt(state.midLo) + " K";
+  document.getElementById("mid-hi-v").textContent = fmt(state.midHi) + " K";
+  document.getElementById("opacity-v").textContent = Math.round(state.opacity * 100) + "%";
+  document.getElementById("mid-lo").value = state.midLo;
+  document.getElementById("mid-hi").value = state.midHi;
+  document.getElementById("scale-bar").style.background = `linear-gradient(90deg, ${D.cmap.join(",")})`;
+}
+
+let pending = 0;
+function update({ redraw = true, restat = true } = {}) {
+  cancelAnimationFrame(pending);
+  pending = requestAnimationFrame(() => { syncLabels(); if (redraw) draw(); if (restat) renderStats(); });
+}
+
+function wire() {
+  document.querySelectorAll("[data-area]").forEach(cb => cb.onchange = () => {
+    state.show[+cb.dataset.area] = cb.checked; update();
+  });
+  document.querySelectorAll("[data-only]").forEach(btn => btn.onclick = () => {
+    const keep = btn.dataset.only.split(",").map(Number);
+    document.querySelectorAll("[data-area]").forEach(cb => {
+      cb.checked = keep.includes(+cb.dataset.area); state.show[+cb.dataset.area] = cb.checked;
+    });
+    update();
+  });
+  document.getElementById("outlines").onchange = drawOutlines;
+  const setMode = mode => {
+    state.mode = mode;
+    document.getElementById("mode-continuous").setAttribute("aria-pressed", mode === "continuous");
+    document.getElementById("mode-classes").setAttribute("aria-pressed", mode === "classes");
+    document.getElementById("continuous-controls").hidden = mode !== "continuous";
+    document.getElementById("class-controls").hidden = mode !== "classes";
+    update({ restat: true });
+  };
+  document.getElementById("mode-continuous").onclick = () => setMode("continuous");
+  document.getElementById("mode-classes").onclick = () => setMode("classes");
+  const range = (id, key, other, below) => {
+    const input = document.getElementById(id);
+    input.value = state[key];
+    input.oninput = () => {
+      let v = +input.value;
+      if (below && v >= state[other]) v = state[other] - 50;
+      if (!below && v <= state[other]) v = state[other] + 50;
+      state[key] = v; input.value = v;
+      update({ restat: key.startsWith("mid") || state.mode === "continuous" });
+    };
+  };
+  range("k-lo", "kLo", "kHi", true); range("k-hi", "kHi", "kLo", false);
+  range("mid-lo", "midLo", "midHi", true); range("mid-hi", "midHi", "midLo", false);
+  document.getElementById("mid-reset").onclick = () => { [state.midLo, state.midHi] = D.middle; update(); };
+  document.getElementById("opacity").oninput = e => { state.opacity = +e.target.value; overlay.setOpacity(state.opacity); syncLabels(); };
+  const setScope = sc => {
+    state.scope = sc;
+    document.getElementById("scope-view").setAttribute("aria-pressed", sc === "view");
+    document.getElementById("scope-city").setAttribute("aria-pressed", sc === "city");
+    update({ redraw: false });
+  };
+  document.getElementById("scope-view").onclick = () => setScope("view");
+  document.getElementById("scope-city").onclick = () => setScope("city");
+  const lakefrontBounds = L.geoJSON(D.outlines.public).getBounds().extend(L.geoJSON(D.outlines.private).getBounds());
+  document.querySelectorAll("[data-go]").forEach(btn => btn.onclick = () => {
+    const go = btn.dataset.go;
+    map.fitBounds(go === "city" ? L.geoJSON(D.outlines.city).getBounds() : go === "lakefront" ? lakefrontBounds : PLACES[go]);
+  });
+
+  map.on("moveend", () => { if (state.scope === "view") update({ redraw: false }); });
+  const readout = document.getElementById("readout");
+  map.on("mousemove", e => {
+    const p = L.CRS.EPSG3857.project(e.latlng);
+    const c = Math.floor((p.x - WX0) / (WX1 - WX0) * D.width), r = Math.floor((WY1 - p.y) / (WY1 - WY0) * D.height);
+    const inside = c >= 0 && c < D.width && r >= 0 && r < D.height;
+    const i = r * D.width + c, a = inside ? area[i] : 0, code = inside ? cct[i] : 0;
+    readout.replaceChildren();
+    const top = document.createElement("div"), bottom = document.createElement("div");
+    bottom.className = "muted";
+    if (code) {
+      const k = toK(code), b = document.createElement("b");
+      b.textContent = (code === 255 ? "≥ " : "") + fmt(k) + " K";
+      top.append(b, " · " + ["warm", "middle", "cool"][classOf(k)]);
+    } else {
+      top.textContent = "no usable light color";
+      top.className = "muted";
+    }
+    bottom.textContent = a ? AREA_NAME[a] : "outside the city";
+    readout.append(top, bottom);
+  });
+  window.addEventListener("resize", () => update({ redraw: false }));
+}
+
+(async () => {
+  [cct, area] = await Promise.all([inflate(D.cct), inflate(D.area)]);
+  canvas = document.createElement("canvas");
+  canvas.width = D.width; canvas.height = D.height;
+  ctx = canvas.getContext("2d");
+  image = ctx.createImageData(D.width, D.height);
+  pixels32 = new Uint32Array(image.data.buffer);
+  overlay = new CanvasOverlay(canvas, D.bounds, { opacity: state.opacity, interactive: false }).addTo(map);
+  map.fitBounds(L.geoJSON(D.outlines.city).getBounds());
+  drawOutlines();
+  wire();
+  // optional start view from the address, e.g. ...explorer.html#classes&downtown
+  const hash = location.hash.slice(1).split("&");
+  if (hash.includes("classes")) document.getElementById("mode-classes").click();
+  const go = hash.find(h => document.querySelector(`[data-go="${h}"]`));
+  if (go) document.querySelector(`[data-go="${go}"]`).click();
+  update();
+  document.getElementById("loading").remove();
+})();
+</script>
+</body>
+</html>
